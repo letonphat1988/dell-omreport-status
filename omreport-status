@@ -12,6 +12,7 @@ omreport = "/opt/dell/srvadmin/bin/omreport"
 ## Check requirements
 if not os.path.exists(omreport):
 	print colored("Can not find omreport cmdline %s" % omreport, "red")
+	exit()
 ##
 
 def call(cmd):
