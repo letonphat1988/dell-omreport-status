@@ -1,10 +1,18 @@
 #!/usr/bin/python
+import os.path
 from texttable import Texttable
 from termcolor import colored
 import subprocess
 
 ### Global Variables
+global omreport
 omreport = "/opt/dell/srvadmin/bin/omreport"
+## end
+
+## Check requirements
+if not os.path.exists(omreport):
+	print colored("Can not find omreport cmdline %s" % omreport, "red")
+##
 
 def call(cmd):
 	p = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True)
@@ -31,7 +39,7 @@ def _alias_header(header, alias):
 	return [alias.get(a, a) for a in header]
 
 def get_controllers():
-        output_controller = call("omreport storage controller -fmt ssv | grep ';'")
+        output_controller = call("%s storage controller -fmt ssv | grep ';'" % omreport)
 
         controller_header = output_controller.splitlines()[0].split(";")
         controller_header_use = ['ID', 'Status', 'Name', 'Firmware Version', 'Driver Version', 'Cache Memory Size']
@@ -49,7 +57,7 @@ def get_controllers():
         return table.draw()
 
 def get_controllers_list():
-	output_controller = call("omreport storage controller -fmt ssv | grep ';'")
+	output_controller = call("%s storage controller -fmt ssv | grep ';'" % omreport)
 	controller_array =  output_controller.splitlines()
         del controller_array[0] ## Remove header from shell's output
 
@@ -61,8 +69,7 @@ def get_controllers_list():
 	return controllers
 
 def get_pdisks(controller_id=0):
-	output_disks = call("omreport storage pdisk controller=%s -fmt ssv | grep ';'" % str(controller_id))
-
+	output_disks = call("%s storage pdisk controller=%s -fmt ssv | grep ';'" % (omreport, str(controller_id)))
 	disk_header = output_disks.splitlines()[0].split(";")
 	disk_header_use = ['ID', 'Media', 'Bus Protocol', 'Status', 'State', 'Vendor ID', 'Failure Predicted', 'Progress', 'Capacity', 'Serial No.', 'Negotiated Speed', 'Device Write Cache', 'Disk Cache Policy']
 	## Alias some metric name from output
@@ -86,7 +93,7 @@ def get_pdisks(controller_id=0):
 	return table.draw()
 
 def get_vdisks(controller_id=0):
-        output_disks = call("omreport storage vdisk controller=%s -fmt ssv | grep ';'" % str(controller_id))
+        output_disks = call("%s storage vdisk controller=%s -fmt ssv | grep ';'" % (omreport, str(controller_id)))
 
         disk_header = output_disks.splitlines()[0].split(";")
 	disk_header_use = ['ID', 'Status', 'Name', 'State', 'Layout', 'Size', 'Device Name', 'Bus Protocol', 'Media', 'Read Policy', 'Write Policy', 'Cache Policy', 'Stripe Element Size', 'Disk Cache Policy']
