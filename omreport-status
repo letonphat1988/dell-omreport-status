@@ -1,0 +1,121 @@
+#!/usr/bin/python
+from texttable import Texttable
+from termcolor import colored
+import subprocess
+
+### Global Variables
+omreport = "/opt/dell/srvadmin/bin/omreport"
+
+def call(cmd):
+	p = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True)
+	(output, err) = p.communicate()
+	return output
+
+def _clear_not_use_columns(columns, columns_use, array):
+	output = [None] * len(columns_use)
+
+	for col in columns_use:
+		index1 = columns.index(col) ## index id when full header columns
+		index2= columns_use.index(col) ## index id when use header columns
+		## Change format Size of Disk
+		if col in "Size" "Capacity":
+			var = array[index1].split(' ')
+			value = var[0] + ' ' + var[1]
+		else:
+			value = array[index1]
+		output[index2] = value
+
+	return output
+
+def _alias_header(header, alias):
+	return [alias.get(a, a) for a in header]
+
+def get_controllers():
+        output_controller = call("omreport storage controller -fmt ssv | grep ';'")
+
+        controller_header = output_controller.splitlines()[0].split(";")
+        controller_header_use = ['ID', 'Status', 'Name', 'Firmware Version', 'Driver Version', 'Cache Memory Size']
+
+        table = Texttable(max_width=0)
+	table.set_deco(Texttable.HEADER)
+        table.header(controller_header_use)
+        controller_array =  output_controller.splitlines()
+        del controller_array[0]
+        for ctl in controller_array:
+                var = ctl.split(';')
+                val = _clear_not_use_columns(controller_header, controller_header_use, var)
+                table.add_row(val)
+
+        return table.draw()
+
+def get_controllers_list():
+	output_controller = call("omreport storage controller -fmt ssv | grep ';'")
+	controller_array =  output_controller.splitlines()
+        del controller_array[0] ## Remove header from shell's output
+
+	controllers = []
+	for ctl in controller_array:
+		var = ctl.split(';')
+		controllers.append(var[0])
+
+	return controllers
+
+def get_pdisks(controller_id=0):
+	output_disks = call("omreport storage pdisk controller=%s -fmt ssv | grep ';'" % str(controller_id))
+
+	disk_header = output_disks.splitlines()[0].split(";")
+	disk_header_use = ['ID', 'Media', 'Bus Protocol', 'Status', 'State', 'Vendor ID', 'Failure Predicted', 'Progress', 'Capacity', 'Serial No.', 'Negotiated Speed', 'Device Write Cache', 'Disk Cache Policy']
+	## Alias some metric name from output
+	disk_alias = {
+		"Failure Predicted": "Pre-Failed",
+		"Negotiated Speed": 'Speed',
+		"Bus Protocol": 'Bus',
+		"Device Write Cache": "Write Cache",
+		"Disk Cache Policy": "Cache Policy"
+		}
+	table = Texttable(max_width=0)
+	table.set_deco(Texttable.HEADER)
+	table.header(_alias_header(disk_header_use, disk_alias))
+	disk_array =  output_disks.splitlines()
+	del disk_array[0]
+	for disk in disk_array:
+		var = disk.split(';')
+		val = _clear_not_use_columns(disk_header, disk_header_use, var)
+		table.add_row(val)
+
+	return table.draw()
+
+def get_vdisks(controller_id=0):
+        output_disks = call("omreport storage vdisk controller=%s -fmt ssv | grep ';'" % str(controller_id))
+
+        disk_header = output_disks.splitlines()[0].split(";")
+	disk_header_use = ['ID', 'Status', 'Name', 'State', 'Layout', 'Size', 'Device Name', 'Bus Protocol', 'Media', 'Read Policy', 'Write Policy', 'Cache Policy', 'Stripe Element Size', 'Disk Cache Policy']
+	disk_alias = {
+		'Stripe Element Size': "Stripe Size",
+		'Disk Cache Policy': "Dsk Cache Policy",
+		"Bus Protocol": 'Bus'
+	}
+        table = Texttable(max_width=0)
+	table.set_deco(Texttable.HEADER)
+	table.header(_alias_header(disk_header_use, disk_alias))
+        disk_array =  output_disks.splitlines()
+        del disk_array[0]
+        for disk in disk_array:
+                var = disk.split(';')
+                val = _clear_not_use_columns(disk_header, disk_header_use, var)
+                table.add_row(val)
+
+        return table.draw()
+
+## Get the list of Controllers on this server
+ARRAYS = get_controllers_list()
+## Show Controllers information
+print colored("CONTROLLERS ON THIS SERVER", 'yellow')
+print get_controllers() + '\n'
+## Get physical disks on per contorller
+for array in ARRAYS:
+	print colored("Physical & Logical information on %s" % array, 'yellow')
+	print colored("------------   Physical Disk list on Controller %s" % array, 'green')
+	print get_pdisks(array) + '\n'
+	print colored("------------   Logical Disk list on Controller %s" % array, 'green')
+	print get_vdisks(array) + '\n'
