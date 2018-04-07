@@ -1,5 +1,5 @@
 #!/usr/bin/python
-import os.path
+import os.path, json
 from texttable import Texttable
 from termcolor import colored
 import subprocess
@@ -11,45 +11,91 @@ omreport = "/opt/dell/srvadmin/bin/omreport"
 
 ## Check requirements
 if not os.path.exists(omreport):
-	print colored("Can not find omreport cmdline %s" % omreport, "red")
-	exit()
+        print colored("Can not find omreport cmdline %s" % omreport, "red")
+        exit()
 ##
 
+
+def main(args):
+        ## Get the list of Controllers on this server
+        ARRAYS = get_controllers_list()
+        if args.format == 'text':
+                ## Show Controllers information
+                print colored("CONTROLLERS ON THIS SERVER", 'yellow')
+                print get_controllers() + '\n'
+                ## Get physical disks on per contorller
+                for array in ARRAYS:
+                        print colored("Physical & Logical information on Controller %s" % array, 'yellow')
+                        print colored("---Physical Disk list on Controller %s" % array, 'green')
+                        print get_pdisks(array) + '\n'
+                        print colored("---Physical Disk with JBOD Mode on Controller %s" % array, 'green')
+                        print get_jbod_pdisks(array) + '\n'
+                        print colored("---Logical Disk list on Controller %s" % array, 'green')
+                        print get_vdisks(array) + '\n'
+        elif args.format == 'json':
+                data = { "CTL": None, "LD": None, "PD": None}
+                data['CTL'] = get_controllers(fmt='json')
+                for ctl in ARRAYS:
+                        data['PD'] = get_pdisks(ctl, fmt='json')
+                        data['PD'].extend(get_jbod_pdisks(ctl, fmt='json'))
+                        data['LD'] = get_vdisks(ctl, fmt='json')
+
+                print data
+
 def call(cmd):
-	p = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True)
-	(output, err) = p.communicate()
-	return output
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True)
+        (output, err) = p.communicate()
+        return output
 
 def _clear_not_use_columns(columns, columns_use, array):
-	output = [None] * len(columns_use)
+        output = [''] * len(columns_use)
 
-	for col in columns_use:
-		index1 = columns.index(col) ## index id when full header columns
-		index2= columns_use.index(col) ## index id when use header columns
-		## Change format Size of Disk
-		if col in "Size" "Capacity":
-			var = array[index1].split(' ')
-			value = var[0] + ' ' + var[1]
-		else:
-			value = array[index1]
-		output[index2] = value
+        for col in columns_use:
+                index1 = columns.index(col) ## index id when full header columns
+                index2= columns_use.index(col) ## index id when use header columns
+                ## Change format Size of Disk
+                if col in "Size" "Capacity":
+                        var = array[index1].split(' ')
+                        value = var[0] + ' ' + var[1]
+                else:
+                        value = array[index1]
+                ## shorten some value from output
+                if value == 'Not Applicable':
+                        value = 'N/A'
+                elif value == '6.00 Gbps':
+                        value = '6 Gbps'
+                elif value == '12.00 Gbps':
+                        value = '12 Gbps'
 
-	return output
+                output[index2] = value
+
+        return output
 
 def _alias_header(header, alias):
-	return [alias.get(a, a) for a in header]
+        return [alias.get(a, a) for a in header]
 
-def get_controllers():
+def get_controllers(fmt='text'):
         output_controller = call("%s storage controller -fmt ssv | grep ';'" % omreport)
 
         controller_header = output_controller.splitlines()[0].split(";")
         controller_header_use = ['ID', 'Status', 'Name', 'Firmware Version', 'Driver Version', 'Cache Memory Size']
-
-        table = Texttable(max_width=0)
-	table.set_deco(Texttable.HEADER)
-        table.header(controller_header_use)
         controller_array =  output_controller.splitlines()
         del controller_array[0]
+
+        if fmt == 'json':
+                data = []
+                for ctl in controller_array:
+                        var = ctl.split(';')
+                        var = _clear_not_use_columns(controller_header, controller_header_use, var)
+                        controller = dict.fromkeys(controller_header_use)
+                        for h in controller_header_use:
+                                controller[h] = var[controller_header_use.index(h)]
+                        data.append(controller)
+                return data
+
+        table = Texttable(max_width=0)
+        table.set_deco(Texttable.HEADER)
+        table.header(controller_header_use)
         for ctl in controller_array:
                 var = ctl.split(';')
                 val = _clear_not_use_columns(controller_header, controller_header_use, var)
@@ -58,72 +104,194 @@ def get_controllers():
         return table.draw()
 
 def get_controllers_list():
-	output_controller = call("%s storage controller -fmt ssv | grep ';'" % omreport)
-	controller_array =  output_controller.splitlines()
+        output_controller = call("%s storage controller -fmt ssv | grep ';'" % omreport)
+        controller_array =  output_controller.splitlines()
         del controller_array[0] ## Remove header from shell's output
 
-	controllers = []
-	for ctl in controller_array:
-		var = ctl.split(';')
-		controllers.append(var[0])
+        controllers = []
+        for ctl in controller_array:
+                var = ctl.split(';')
+                controllers.append(var[0])
 
-	return controllers
+        return controllers
 
-def get_pdisks(controller_id=0):
-	output_disks = call("%s storage pdisk controller=%s -fmt ssv | grep ';'" % (omreport, str(controller_id)))
-	disk_header = output_disks.splitlines()[0].split(";")
-	disk_header_use = ['ID', 'Media', 'Bus Protocol', 'Status', 'State', 'Vendor ID', 'Failure Predicted', 'Progress', 'Capacity', 'Serial No.', 'Negotiated Speed', 'Device Write Cache', 'Disk Cache Policy']
-	## Alias some metric name from output
-	disk_alias = {
-		"Failure Predicted": "Pre-Failed",
-		"Negotiated Speed": 'Speed',
-		"Bus Protocol": 'Bus',
-		"Device Write Cache": "Write Cache",
-		"Disk Cache Policy": "Cache Policy"
-		}
-	table = Texttable(max_width=0)
-	table.set_deco(Texttable.HEADER)
-	table.header(_alias_header(disk_header_use, disk_alias))
-	disk_array =  output_disks.splitlines()
-	del disk_array[0]
-	for disk in disk_array:
-		var = disk.split(';')
-		val = _clear_not_use_columns(disk_header, disk_header_use, var)
-		table.add_row(val)
+def get_pdisks(controller_id=0, fmt='text'):
+        output_disks = call("%s storage pdisk controller=%s -fmt ssv | grep ';'" % (omreport, str(controller_id)))
+        disk_header = output_disks.splitlines()[0].split(";")
+        disk_header_use = ['ID', 'Media', 'Bus Protocol', 'Status', 'State', 'Vendor ID', 'Failure Predicted', 'Capacity', 'Product ID', 'Serial No.', 'Negotiated Speed', 'Device Write Cache', 'Disk Cache Policy', 'Progress']
+        ## Alias some metric name from output
+        disk_alias = {
+                "Failure Predicted": "Pre-Failed",
+                "Negotiated Speed": 'Speed',
+                "Bus Protocol": 'Bus',
+                "Device Write Cache": "Write Cache",
+                "Disk Cache Policy": "Cache Policy"
+                }
+        disk_array =  output_disks.splitlines()
+        del disk_array[0]
 
-	return table.draw()
+        if fmt == 'json':
+                data = []
+                for dsk in disk_array:
+                        var = dsk.split(';')
+                        if 'Non-RAID' not in var:
+                                var = _clear_not_use_columns(disk_header, disk_header_use, var)
+                                disk = dict.fromkeys(disk_header_use)
+                                for h in disk_header_use:
+                                        disk[h] = var[disk_header_use.index(h)]
+                                data.append(disk)
+                return data
 
-def get_vdisks(controller_id=0):
+        table = Texttable(max_width=0)
+        table.set_deco(Texttable.HEADER)
+        table.header(_alias_header(disk_header_use, disk_alias))
+        for disk in disk_array:
+                var = disk.split(';')
+                if 'Non-RAID' not in var:
+                        val = _clear_not_use_columns(disk_header, disk_header_use, var)
+                        table.add_row(val)
+
+        return table.draw()
+
+def get_scsi_id_from_device():
+        device_ids = {}
+        devices = call('ls /dev/sd?').splitlines()
+        for d in devices:
+                SCSI_ID = call("udevadm info --query=all --name=%s | egrep 'ID_SCSI_SERIAL|ID_SERIAL_SHORT' | awk '{print $2}' | cut -d'=' -f2" % d)
+                if SCSI_ID != '':
+                        val = {SCSI_ID.rstrip(): d}
+                        device_ids.update(val)
+        return device_ids
+
+def get_jbod_pdisks(controller_id=0, fmt='text'):
+        output_disks = call("%s storage pdisk controller=%s -fmt ssv | grep ';'" % (omreport, str(controller_id)))
+        disk_header = output_disks.splitlines()[0].split(";")
+        disk_header.extend(['Device'])
+        disk_header_use = ['ID', 'Media', 'Bus Protocol', 'Status', 'State', 'Vendor ID', 'Failure Predicted', 'Capacity', 'Product ID', 'Serial No.', 'Negotiated Speed', 'Device Write Cache', 'Disk Cache Policy', 'Device']
+        ## Alias some metric name from output
+        disk_alias = {
+                "Failure Predicted": "Pre-Failed",
+                "Negotiated Speed": 'Speed',
+                "Bus Protocol": 'Bus',
+                "Device Write Cache": "Write Cache",
+                "Disk Cache Policy": "Cache Policy"
+                }
+        disk_array =  output_disks.splitlines()
+        del disk_array[0]
+        device_list_on_os = get_scsi_id_from_device()
+
+        if fmt == 'json':
+                data = []
+                for dsk in disk_array:
+                        var = dsk.split(';')
+                        if 'Non-RAID' in var:
+                                for key, value in device_list_on_os.iteritems():
+                                        if key in var:
+                                                var.extend([value])
+                                if len(disk_header_use) != len(var):
+                                         var.extend(['N/A'])
+                                var = _clear_not_use_columns(disk_header, disk_header_use, var)
+                                disk = dict.fromkeys(disk_header_use)
+                                for h in disk_header_use:
+                                        disk[h] = var[disk_header_use.index(h)]
+                                if disk['State'] == 'Non-RAID':
+                                        data.append(disk)
+                return data
+
+        table = Texttable(max_width=0)
+        table.set_deco(Texttable.HEADER)
+        table.header(_alias_header(disk_header_use, disk_alias))
+        for disk in disk_array:
+                var = disk.split(';')
+                if 'Non-RAID' in var:
+                        for key, value in device_list_on_os.iteritems():
+                                if key in var:
+                                        var.extend([value])
+                        if len(disk_header_use) != len(var):
+                                 var.extend(['N/A'])
+                        val = _clear_not_use_columns(disk_header, disk_header_use, var)
+                        table.add_row(val)
+
+        return table.draw()
+
+def get_vdisk_members(controller_id, vdisk_id):
+        output_disks = call("%s storage pdisk controller=%s vdisk=%s -fmt ssv | grep ';'" % (omreport, str(controller_id), str(vdisk_id)))
+        disk_header = output_disks.splitlines()[0].split(";")
+        disk_header_use = ['ID', 'Media', 'Bus Protocol', 'Status', 'State', 'Vendor ID', 'Failure Predicted', 'Capacity', 'Product ID', 'Serial No.', 'Negotiated Speed', 'Device Write Cache', 'Disk Cache Policy', 'Progress']
+        ## Alias some metric name from output
+        disk_alias = {
+                "Failure Predicted": "Pre-Failed",
+                "Negotiated Speed": 'Speed',
+                "Bus Protocol": 'Bus',
+                "Device Write Cache": "Write Cache",
+                "Disk Cache Policy": "Cache Policy"
+                }
+        disk_array =  output_disks.splitlines()
+        del disk_array[0]
+        members = []
+        for dsk in disk_array:
+                var = dsk.split(';')
+                var = _clear_not_use_columns(disk_header, disk_header_use, var)
+                disk = dict.fromkeys(disk_header_use)
+                for h in disk_header_use:
+                        disk[h] = var[disk_header_use.index(h)]
+                members.extend([disk['ID']])
+        return '; '.join(members)
+
+
+def get_vdisks(controller_id=0, fmt='text'):
         output_disks = call("%s storage vdisk controller=%s -fmt ssv | grep ';'" % (omreport, str(controller_id)))
 
         disk_header = output_disks.splitlines()[0].split(";")
-	disk_header_use = ['ID', 'Status', 'Name', 'State', 'Layout', 'Size', 'Device Name', 'Bus Protocol', 'Media', 'Read Policy', 'Write Policy', 'Cache Policy', 'Stripe Element Size', 'Disk Cache Policy']
-	disk_alias = {
-		'Stripe Element Size': "Stripe Size",
-		'Disk Cache Policy': "Dsk Cache Policy",
-		"Bus Protocol": 'Bus'
-	}
-        table = Texttable(max_width=0)
-	table.set_deco(Texttable.HEADER)
-	table.header(_alias_header(disk_header_use, disk_alias))
+        # add more header
+        disk_header.extend(['Members'])
+        disk_header_use = ['ID', 'Status', 'State', 'Layout', 'Size', 'Device Name', 'Media', 'Read Policy', 'Write Policy', 'Cache Policy', 'Stripe Element Size', 'Disk Cache Policy', 'Members']
+        ## Alias some metric name from output
+        disk_alias = {
+                'Stripe Element Size': "Stripe Size",
+                'Disk Cache Policy': "Dsk Cache Policy",
+                "Bus Protocol": 'Bus'
+        }
         disk_array =  output_disks.splitlines()
         del disk_array[0]
+
+        if fmt == 'json':
+                data = []
+                for dsk in disk_array:
+                        var = dsk.split(';')
+                        var.extend([get_vdisk_members(controller_id,var[0])])
+                        var = _clear_not_use_columns(disk_header, disk_header_use, var)
+                        disk = dict.fromkeys(disk_header_use)
+                        for h in disk_header_use:
+                                disk[h] = var[disk_header_use.index(h)]
+                        data.append(disk)
+                return data
+
+
+        table = Texttable(max_width=0)
+        table.set_deco(Texttable.HEADER)
+        table.header(_alias_header(disk_header_use, disk_alias))
         for disk in disk_array:
                 var = disk.split(';')
+                var.extend([get_vdisk_members(controller_id,var[0])])
                 val = _clear_not_use_columns(disk_header, disk_header_use, var)
                 table.add_row(val)
 
         return table.draw()
 
-## Get the list of Controllers on this server
-ARRAYS = get_controllers_list()
-## Show Controllers information
-print colored("CONTROLLERS ON THIS SERVER", 'yellow')
-print get_controllers() + '\n'
-## Get physical disks on per contorller
-for array in ARRAYS:
-	print colored("Physical & Logical information on %s" % array, 'yellow')
-	print colored("------------   Physical Disk list on Controller %s" % array, 'green')
-	print get_pdisks(array) + '\n'
-	print colored("------------   Logical Disk list on Controller %s" % array, 'green')
-	print get_vdisks(array) + '\n'
+def get_parser():
+    """Get parser object for script xy.py."""
+    from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
+    parser = ArgumentParser(description=__doc__,
+                            formatter_class=ArgumentDefaultsHelpFormatter)
+    parser.add_argument("-f", "--format",
+                        dest="format",
+                        help="The type of output text/json (default is text",
+                        default='text')
+    return parser
+
+
+
+if __name__ == "__main__":
+        args = get_parser().parse_args()
+        main(args)
