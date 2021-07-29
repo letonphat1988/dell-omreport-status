@@ -9,3 +9,5 @@ optional arguments:
   -f FORMAT, --format FORMAT
                         The type of output text/json (default is text
                         (default: text)
+                        
+![preview](./example-output.PNG)
